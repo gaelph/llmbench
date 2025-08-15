@@ -1,14 +1,18 @@
 package tui
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"strings"
+	"time"
 
 	"llmbench/internal/models"
 	"llmbench/internal/service"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"gopkg.in/yaml.v3"
 )
 
 // App represents the TUI application
@@ -41,6 +45,7 @@ const (
 	StateConnectionTest
 	StateBenchmarkRunning
 	StateResults
+	StateSavePrompt
 	StateError
 )
 
@@ -64,8 +69,17 @@ type Model struct {
 	benchmarkDone     bool
 	benchmarkError    error
 
+	// Benchmark channels for continuous progress updates
+	progressChan chan benchmarkProgressMsg
+	resultChan   chan tea.Msg
+
 	// Results
 	summaries map[string]models.BenchmarkSummary
+
+	// Save functionality
+	saveFilename string
+	saveError    error
+	saveSuccess  bool
 
 	// UI
 	width  int
@@ -77,6 +91,10 @@ type Model struct {
 type BenchmarkProgress struct {
 	Completed int
 	Total     int
+}
+
+type saveCompleteMsg struct {
+	err error
 }
 
 // newModel creates a new model
@@ -123,7 +141,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Completed: msg.completed,
 			Total:     msg.total,
 		}
-		return m, nil
+		// Continue listening for more progress updates
+		return m, m.listenForProgress()
 
 	case benchmarkCompleteMsg:
 		m.benchmarkResults = msg.results
@@ -135,6 +154,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case benchmarkErrorMsg:
 		m.benchmarkError = msg.err
 		m.state = StateError
+		return m, nil
+
+	case saveCompleteMsg:
+		if msg.err != nil {
+			m.saveError = msg.err
+		} else {
+			m.saveSuccess = true
+		}
 		return m, nil
 	}
 
@@ -152,6 +179,8 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleBenchmarkKeys(msg)
 	case StateResults:
 		return m.handleResultsKeys(msg)
+	case StateSavePrompt:
+		return m.handleSavePromptKeys(msg)
 	case StateError:
 		return m.handleErrorKeys(msg)
 	}
@@ -218,6 +247,42 @@ func (m Model) handleResultsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "esc", "b":
 		m.state = StateMenu
+	case "s":
+		// Start save process
+		m.state = StateSavePrompt
+		m.saveFilename = ""
+		m.saveError = nil
+		m.saveSuccess = false
+	}
+	return m, nil
+}
+
+// handleSavePromptKeys handles save prompt screen
+func (m Model) handleSavePromptKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c", "q":
+		return m, tea.Quit
+	case "esc":
+		// Cancel save and go back to results
+		m.state = StateResults
+		m.saveFilename = ""
+		m.saveError = nil
+		m.saveSuccess = false
+	case "enter":
+		// Save the file
+		if m.saveFilename != "" {
+			return m, m.saveResults()
+		}
+	case "backspace":
+		// Remove last character
+		if len(m.saveFilename) > 0 {
+			m.saveFilename = m.saveFilename[:len(m.saveFilename)-1]
+		}
+	default:
+		// Add character to filename
+		if len(msg.String()) == 1 {
+			m.saveFilename += msg.String()
+		}
 	}
 	return m, nil
 }
@@ -244,6 +309,8 @@ func (m Model) View() string {
 		return m.renderBenchmark()
 	case StateResults:
 		return m.renderResults()
+	case StateSavePrompt:
+		return m.renderSavePrompt()
 	case StateError:
 		return m.renderError()
 	}
@@ -321,6 +388,149 @@ func (m Model) renderMenu() string {
 	return boxStyle.Render(b.String())
 }
 
+// saveResults saves the benchmark results to a YAML file
+func (m Model) saveResults() tea.Cmd {
+	return func() tea.Msg {
+		// Ensure filename has .yaml extension
+		filename := m.saveFilename
+		if !strings.HasSuffix(filename, ".yaml") && !strings.HasSuffix(filename, ".yml") {
+			filename += ".yaml"
+		}
+
+		// Create the saved results structure (same as in benchmark.go)
+		savedResults := struct {
+			Metadata struct {
+				Timestamp string `yaml:"timestamp"`
+				Version   string `yaml:"version"`
+			} `yaml:"metadata"`
+			Request   models.BenchmarkRequest             `yaml:"request"`
+			Results   map[string][]models.BenchmarkResult `yaml:"results"`
+			Summaries map[string]models.BenchmarkSummary  `yaml:"summaries"`
+		}{
+			Request:   m.request,
+			Results:   m.benchmarkResults,
+			Summaries: m.summaries,
+		}
+
+		// Set metadata
+		savedResults.Metadata.Timestamp = time.Now().Format(time.RFC3339)
+		savedResults.Metadata.Version = "1.0"
+
+		// Marshal to YAML
+		data, err := yaml.Marshal(savedResults)
+		if err != nil {
+			return saveCompleteMsg{err: fmt.Errorf("failed to marshal results: %w", err)}
+		}
+
+		// Write to file
+		err = os.WriteFile(filename, data, 0644)
+		if err != nil {
+			return saveCompleteMsg{err: fmt.Errorf("failed to write file: %w", err)}
+		}
+
+		return saveCompleteMsg{err: nil}
+	}
+}
+
+// testConnections tests connections to all providers
+func (m Model) testConnections() tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		results := m.benchmarkService.TestConnections(ctx)
+		return connectionTestMsg{results: results}
+	}
+}
+
+// Global channels for progress updates (workaround for BubbleTea limitations)
+var (
+	globalProgressChan chan benchmarkProgressMsg
+	globalResultChan   chan tea.Msg
+)
+
+// runBenchmark runs the benchmark for all providers
+func (m Model) runBenchmark() tea.Cmd {
+	return tea.Batch(
+		m.startBenchmark(),
+		m.listenForUpdates(),
+	)
+}
+
+// startBenchmark starts the actual benchmark execution
+func (m Model) startBenchmark() tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		
+		// Initialize global channels
+		globalProgressChan = make(chan benchmarkProgressMsg, 100)
+		globalResultChan = make(chan tea.Msg, 1)
+		
+		// Start benchmark in goroutine
+		go func() {
+			defer close(globalProgressChan)
+			defer close(globalResultChan)
+			
+			// Progress callback to send updates via global channel
+			progressCallback := func(provider string, completed, total int) {
+				select {
+				case globalProgressChan <- benchmarkProgressMsg{
+					provider:  provider,
+					completed: completed,
+					total:     total,
+				}:
+				default:
+					// Channel is full, skip this update
+				}
+			}
+
+			// Run the actual benchmark
+			results, err := m.benchmarkService.RunBenchmark(ctx, m.request, progressCallback)
+			if err != nil {
+				globalResultChan <- benchmarkErrorMsg{err: err}
+			} else {
+				globalResultChan <- benchmarkCompleteMsg{results: results}
+			}
+		}()
+		
+		return benchmarkStartMsg{}
+	}
+}
+
+// listenForUpdates continuously listens for progress updates and completion
+func (m Model) listenForUpdates() tea.Cmd {
+	return tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+		if globalProgressChan == nil || globalResultChan == nil {
+			// Channels not ready yet, keep ticking
+			return tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+				return m.listenForUpdates()()
+			})()
+		}
+		
+		// Non-blocking check for messages
+		select {
+		case progress, ok := <-globalProgressChan:
+			if ok {
+				return progress
+			}
+		case result, ok := <-globalResultChan:
+			if ok {
+				return result
+			}
+		default:
+			// No messages available, continue ticking
+		}
+		
+		// Continue listening by returning another tick
+		return tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+			return m.listenForUpdates()()
+		})()
+	})
+}
+
+// listenForProgress continues listening for progress updates
+func (m Model) listenForProgress() tea.Cmd {
+	return m.listenForUpdates()
+}
+
 // renderConnectionTest renders the connection test screen
 func (m Model) renderConnectionTest() string {
 	var b strings.Builder
@@ -370,7 +580,24 @@ func (m Model) renderBenchmark() string {
 	if !m.benchmarkDone {
 		b.WriteString("Benchmark in progress...\n\n")
 
-		for provider, progress := range m.benchmarkProgress {
+		// Get provider names and sort them alphabetically for consistent display
+		var providers []string
+		for provider := range m.benchmarkProgress {
+			providers = append(providers, provider)
+		}
+		
+		// Sort providers alphabetically
+		for i := 0; i < len(providers); i++ {
+			for j := i + 1; j < len(providers); j++ {
+				if providers[i] > providers[j] {
+					providers[i], providers[j] = providers[j], providers[i]
+				}
+			}
+		}
+
+		// Display progress bars in sorted order
+		for _, provider := range providers {
+			progress := m.benchmarkProgress[provider]
 			percentage := float64(progress.Completed) / float64(progress.Total) * 100
 			b.WriteString(fmt.Sprintf("%s: %d/%d (%.1f%%)\n", provider, progress.Completed, progress.Total, percentage))
 
@@ -408,7 +635,48 @@ func (m Model) renderResults() string {
 		b.WriteString("\n")
 	}
 
-	b.WriteString(infoStyle.Render("Press 'b' or Esc to go back, q to quit"))
+	b.WriteString(infoStyle.Render("Press 's' to save results, 'b' or Esc to go back, q to quit"))
+
+	return boxStyle.Render(b.String())
+}
+
+// renderSavePrompt renders the save prompt screen
+func (m Model) renderSavePrompt() string {
+	var b strings.Builder
+
+	b.WriteString(titleStyle.Render("Save Results"))
+	b.WriteString("\n\n")
+
+	if m.saveSuccess {
+		b.WriteString(successStyle.Render("✅ Results saved successfully!"))
+		b.WriteString("\n\n")
+		b.WriteString(infoStyle.Render("Press any key to continue"))
+	} else if m.saveError != nil {
+		b.WriteString(errorStyle.Render(fmt.Sprintf("❌ Error saving file: %v", m.saveError)))
+		b.WriteString("\n\n")
+		b.WriteString("Enter filename: ")
+		b.WriteString(selectedStyle.Render(m.saveFilename + "█"))
+		b.WriteString("\n\n")
+		b.WriteString(infoStyle.Render("Press Enter to save, Esc to cancel"))
+	} else {
+		b.WriteString("Enter filename to save results:")
+		b.WriteString("\n\n")
+		b.WriteString("Filename: ")
+		b.WriteString(selectedStyle.Render(m.saveFilename + "█"))
+		b.WriteString("\n\n")
+		if m.saveFilename == "" {
+			b.WriteString(infoStyle.Render("Type a filename and press Enter to save, Esc to cancel"))
+		} else {
+			// Show preview of what will be saved
+			filename := m.saveFilename
+			if !strings.HasSuffix(filename, ".yaml") && !strings.HasSuffix(filename, ".yml") {
+				filename += ".yaml"
+			}
+			b.WriteString(infoStyle.Render(fmt.Sprintf("Will save to: %s", filename)))
+			b.WriteString("\n")
+			b.WriteString(infoStyle.Render("Press Enter to save, Esc to cancel"))
+		}
+	}
 
 	return boxStyle.Render(b.String())
 }
