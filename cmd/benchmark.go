@@ -5,13 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
+	"llmbench/internal/charts"
 	"llmbench/internal/models"
 	"llmbench/internal/service"
 	"llmbench/internal/tui"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -32,6 +36,8 @@ and measure response times, success rates, and token usage.`,
 	outputJSON  bool
 	interactive bool
 	streaming   bool
+	showCharts  bool
+	saveResults string
 )
 
 func init() {
@@ -44,6 +50,8 @@ func init() {
 	benchmarkCmd.Flags().BoolVar(&outputJSON, "json", false, "Output results in JSON format")
 	benchmarkCmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "Run in interactive mode with TUI")
 	benchmarkCmd.Flags().BoolVarP(&streaming, "streaming", "s", false, "Enable streaming mode with TTFT and throughput metrics")
+	benchmarkCmd.Flags().BoolVar(&showCharts, "charts", false, "Display bar charts for TTFT and throughput metrics")
+	benchmarkCmd.Flags().StringVar(&saveResults, "save", "", "Save benchmark results to YAML file (e.g., --save results.yaml)")
 }
 
 func runBenchmark(cmd *cobra.Command, args []string) error {
@@ -135,6 +143,14 @@ func runCLIBenchmark(ctx context.Context, benchmarkService *service.BenchmarkSer
 	fmt.Println("\nGenerating summary...")
 	summaries := benchmarkService.GenerateSummary(results)
 
+	// Save results to YAML file if requested
+	if saveResults != "" {
+		if err := saveBenchmarkResults(summaries, results, saveResults); err != nil {
+			return fmt.Errorf("failed to save results: %w", err)
+		}
+		fmt.Printf("✅ Results saved to %s\n", saveResults)
+	}
+
 	if outputJSON {
 		return outputJSONResults(summaries, results)
 	}
@@ -157,6 +173,21 @@ func outputJSONResults(summaries map[string]models.BenchmarkSummary, results map
 }
 
 func outputTextResults(summaries map[string]models.BenchmarkSummary) error {
+	// If charts are requested, show only charts
+	if showCharts {
+		fmt.Println("\n" + strings.Repeat("=", 80))
+		fmt.Println("BENCHMARK CHARTS")
+		fmt.Println(strings.Repeat("=", 80))
+		
+		// Create chart generator with appropriate dimensions
+		chartGen := charts.NewChartGenerator(60, 15)
+		chartsOutput := chartGen.GenerateAllCharts(summaries)
+		fmt.Print(chartsOutput)
+		fmt.Println(strings.Repeat("=", 80))
+		return nil
+	}
+
+	// Otherwise, show text summary
 	fmt.Println("\n" + strings.Repeat("=", 80))
 	fmt.Println("BENCHMARK RESULTS")
 	fmt.Println(strings.Repeat("=", 80))
@@ -192,5 +223,60 @@ func outputTextResults(summaries map[string]models.BenchmarkSummary) error {
 	}
 
 	fmt.Println("\n" + strings.Repeat("=", 80))
+	return nil
+}
+
+// BenchmarkResultsFile represents the structure of saved benchmark results
+type BenchmarkResultsFile struct {
+	Timestamp time.Time                                `yaml:"timestamp"`
+	Metadata  BenchmarkMetadata                        `yaml:"metadata"`
+	Summaries map[string]models.BenchmarkSummary       `yaml:"summaries"`
+	Results   map[string][]models.BenchmarkResult      `yaml:"results"`
+}
+
+// BenchmarkMetadata contains information about the benchmark run
+type BenchmarkMetadata struct {
+	Message     string `yaml:"message"`
+	Requests    int    `yaml:"requests"`
+	Concurrency int    `yaml:"concurrency"`
+	MaxTokens   int    `yaml:"max_tokens"`
+	Streaming   bool   `yaml:"streaming"`
+}
+
+// saveBenchmarkResults saves benchmark results to a YAML file
+func saveBenchmarkResults(summaries map[string]models.BenchmarkSummary, results map[string][]models.BenchmarkResult, filename string) error {
+	// Create directory if it doesn't exist
+	dir := filepath.Dir(filename)
+	if dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+		}
+	}
+
+	// Create the results file structure
+	resultsFile := BenchmarkResultsFile{
+		Timestamp: time.Now(),
+		Metadata: BenchmarkMetadata{
+			Message:     message,
+			Requests:    configMgr.GetBenchmarkConfig().Requests,
+			Concurrency: configMgr.GetBenchmarkConfig().Concurrency,
+			MaxTokens:   maxTokens,
+			Streaming:   streaming,
+		},
+		Summaries: summaries,
+		Results:   results,
+	}
+
+	// Marshal to YAML
+	yamlData, err := yaml.Marshal(resultsFile)
+	if err != nil {
+		return fmt.Errorf("failed to marshal results to YAML: %w", err)
+	}
+
+	// Write to file
+	if err := os.WriteFile(filename, yamlData, 0644); err != nil {
+		return fmt.Errorf("failed to write results to file: %w", err)
+	}
+
 	return nil
 }
