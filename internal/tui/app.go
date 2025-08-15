@@ -250,33 +250,33 @@ func (m Model) View() string {
 	return ""
 }
 
-// Styles
+// Adaptive color scheme that works on both light and dark themes
 var (
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#FAFAFA")).
-			Background(lipgloss.Color("#7D56F4")).
+			Foreground(lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#FAFAFA"}).
+			Background(lipgloss.AdaptiveColor{Light: "#5A67D8", Dark: "#7D56F4"}).
 			Padding(0, 1)
 
 	selectedStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#7D56F4"))
+			Foreground(lipgloss.AdaptiveColor{Light: "#5A67D8", Dark: "#7D56F4"})
 
 	normalStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FAFAFA"))
+			Foreground(lipgloss.AdaptiveColor{Light: "#2D3748", Dark: "#FAFAFA"})
 
 	successStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#04B575"))
+			Foreground(lipgloss.AdaptiveColor{Light: "#38A169", Dark: "#04B575"})
 
 	errorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FF5F87"))
+			Foreground(lipgloss.AdaptiveColor{Light: "#E53E3E", Dark: "#FF5F87"})
 
 	infoStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#5A56E0"))
+			Foreground(lipgloss.AdaptiveColor{Light: "#3182CE", Dark: "#5A56E0"})
 
 	boxStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#874BFD")).
+			BorderForeground(lipgloss.AdaptiveColor{Light: "#A0AEC0", Dark: "#874BFD"}).
 			Padding(1, 2)
 )
 

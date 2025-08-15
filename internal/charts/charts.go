@@ -17,6 +17,20 @@ type ChartGenerator struct {
 	height int
 }
 
+// getAdaptiveColors returns theme-adaptive colors for charts
+func (cg *ChartGenerator) getAdaptiveColors() []lipgloss.AdaptiveColor {
+	return []lipgloss.AdaptiveColor{
+		{Light: "#22C55E", Dark: "#10B981"}, // Green
+		{Light: "#EF4444", Dark: "#F87171"}, // Red  
+		{Light: "#F59E0B", Dark: "#FBBF24"}, // Yellow
+		{Light: "#3B82F6", Dark: "#60A5FA"}, // Blue
+		{Light: "#A855F7", Dark: "#C084FC"}, // Purple
+		{Light: "#06B6D4", Dark: "#22D3EE"}, // Cyan
+		{Light: "#EC4899", Dark: "#F472B6"}, // Pink
+		{Light: "#84CC16", Dark: "#A3E635"}, // Lime
+	}
+}
+
 // NewChartGenerator creates a new chart generator with specified dimensions
 func NewChartGenerator(width, height int) *ChartGenerator {
 	return &ChartGenerator{
@@ -109,28 +123,28 @@ func (cg *ChartGenerator) GenerateTTFTChart(summaries map[string]models.Benchmar
 
 	var barData []barchart.BarData
 	var legendEntries []LegendEntry
-	colors := []string{"10", "9", "11", "12", "13", "14", "15", "6"} // Green, Red, Yellow, Blue, Magenta, Cyan, White, Cyan
+	adaptiveColors := cg.getAdaptiveColors()
 
 	for i, key := range validKeys {
 		summary := summaries[key]
 		// Convert duration to milliseconds for better readability
 		ttftMs := float64(summary.AvgTimeToFirstToken.Nanoseconds()) / 1e6
 		
-		color := colors[i%len(colors)]
+		adaptiveColor := adaptiveColors[i%len(adaptiveColors)]
 		
 		barData = append(barData, barchart.BarData{
 			Label: key,
 			Values: []barchart.BarValue{
-				{Name: "TTFT", Value: ttftMs, Style: lipgloss.NewStyle().Foreground(lipgloss.Color(color))},
+				{Name: "TTFT", Value: ttftMs, Style: lipgloss.NewStyle().Foreground(adaptiveColor)},
 			},
 		})
 
-		// Add to legend
+		// Add to legend - use the adaptive color's dark variant for consistency
 		legendEntries = append(legendEntries, LegendEntry{
 			Label: key,
 			Value: ttftMs,
 			Unit:  "ms",
-			Color: color,
+			Color: adaptiveColor.Dark, // Use dark variant for legend color indicator
 		})
 	}
 
@@ -171,25 +185,25 @@ func (cg *ChartGenerator) GenerateThroughputChart(summaries map[string]models.Be
 
 	var barData []barchart.BarData
 	var legendEntries []LegendEntry
-	colors := []string{"10", "9", "11", "12", "13", "14", "15", "6"} // Green, Red, Yellow, Blue, Magenta, Cyan, White, Cyan
+	adaptiveColors := cg.getAdaptiveColors()
 
 	for i, key := range validKeys {
 		summary := summaries[key]
-		color := colors[i%len(colors)]
+		adaptiveColor := adaptiveColors[i%len(adaptiveColors)]
 		
 		barData = append(barData, barchart.BarData{
 			Label: key,
 			Values: []barchart.BarValue{
-				{Name: "Throughput", Value: summary.AvgTokenThroughput, Style: lipgloss.NewStyle().Foreground(lipgloss.Color(color))},
+				{Name: "Throughput", Value: summary.AvgTokenThroughput, Style: lipgloss.NewStyle().Foreground(adaptiveColor)},
 			},
 		})
 
-		// Add to legend
+		// Add to legend - use the adaptive color's dark variant for consistency
 		legendEntries = append(legendEntries, LegendEntry{
 			Label: key,
 			Value: summary.AvgTokenThroughput,
 			Unit:  "tokens/sec",
-			Color: color,
+			Color: adaptiveColor.Dark,
 		})
 	}
 
@@ -230,28 +244,28 @@ func (cg *ChartGenerator) GenerateResponseTimeChart(summaries map[string]models.
 
 	var barData []barchart.BarData
 	var legendEntries []LegendEntry
-	colors := []string{"10", "9", "11", "12", "13", "14", "15", "6"} // Green, Red, Yellow, Blue, Magenta, Cyan, White, Cyan
+	adaptiveColors := cg.getAdaptiveColors()
 
 	for i, key := range validKeys {
 		summary := summaries[key]
 		// Convert duration to milliseconds for better readability
 		responseTimeMs := float64(summary.AvgResponseTime.Nanoseconds()) / 1e6
 		
-		color := colors[i%len(colors)]
+		adaptiveColor := adaptiveColors[i%len(adaptiveColors)]
 		
 		barData = append(barData, barchart.BarData{
 			Label: key,
 			Values: []barchart.BarValue{
-				{Name: "Response Time", Value: responseTimeMs, Style: lipgloss.NewStyle().Foreground(lipgloss.Color(color))},
+				{Name: "Response Time", Value: responseTimeMs, Style: lipgloss.NewStyle().Foreground(adaptiveColor)},
 			},
 		})
 
-		// Add to legend
+		// Add to legend - use the adaptive color's dark variant for consistency
 		legendEntries = append(legendEntries, LegendEntry{
 			Label: key,
 			Value: responseTimeMs,
 			Unit:  "ms",
-			Color: color,
+			Color: adaptiveColor.Dark,
 		})
 	}
 
