@@ -161,9 +161,14 @@ func outputTextResults(summaries map[string]models.BenchmarkSummary) error {
 	fmt.Println("BENCHMARK RESULTS")
 	fmt.Println(strings.Repeat("=", 80))
 
-	for provider, summary := range summaries {
-		fmt.Printf("\n📊 %s\n", strings.ToUpper(provider))
-		fmt.Println(strings.Repeat("-", 40))
+	for _, summary := range summaries {
+		// Display provider and model name clearly
+		if summary.ModelName != "" {
+			fmt.Printf("\n📊 %s - %s\n", strings.ToUpper(summary.Provider), summary.ModelName)
+		} else {
+			fmt.Printf("\n📊 %s\n", strings.ToUpper(summary.Provider))
+		}
+		fmt.Println(strings.Repeat("-", 50))
 		fmt.Printf("Total Requests:     %d\n", summary.TotalRequests)
 		fmt.Printf("Successful:         %d\n", summary.SuccessfulReqs)
 		fmt.Printf("Failed:             %d\n", summary.FailedRequests)

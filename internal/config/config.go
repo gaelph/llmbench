@@ -96,8 +96,13 @@ func (m *Manager) validate() error {
 		if provider.APIKey == "" {
 			return fmt.Errorf("provider %s: api_key is required", provider.Name)
 		}
-		if provider.Model == "" {
-			return fmt.Errorf("provider %s: model is required", provider.Name)
+		if len(provider.Models) == 0 {
+			return fmt.Errorf("provider %s: at least one model is required", provider.Name)
+		}
+		for j, model := range provider.Models {
+			if model == "" {
+				return fmt.Errorf("provider %s: model %d cannot be empty", provider.Name, j)
+			}
 		}
 	}
 
@@ -146,11 +151,23 @@ func (m *Manager) CreateSampleConfig(path string) error {
     - name: openai
       base_url: https://api.openai.com/v1
       api_key: your-openai-api-key
-      model: gpt-3.5-turbo
+      models:
+        - gpt-3.5-turbo
+        - gpt-4
+        - gpt-4-turbo
     - name: anthropic
       base_url: https://api.anthropic.com/v1
       api_key: your-anthropic-api-key
-      model: claude-3-haiku-20240307
+      models:
+        - claude-3-haiku-20240307
+        - claude-3-sonnet-20240229
+        - claude-3-opus-20240229
+    - name: azure-openai
+      base_url: https://your-resource.openai.azure.com/
+      api_key: your-azure-api-key
+      models:
+        - gpt-35-turbo
+        - gpt-4
   concurrency: 2
   requests: 50
   timeout: 30s

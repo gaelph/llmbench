@@ -54,31 +54,36 @@ func (bs *BenchmarkService) TestConnections(ctx context.Context) map[string]erro
 	return results
 }
 
-// RunBenchmark executes benchmark tests for all providers
+// RunBenchmark executes benchmark tests for all providers and their models
 func (bs *BenchmarkService) RunBenchmark(ctx context.Context, request models.BenchmarkRequest, progressCallback func(string, int, int)) (map[string][]models.BenchmarkResult, error) {
 	results := make(map[string][]models.BenchmarkResult)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
 	for _, provider := range bs.providers {
-		wg.Add(1)
-		go func(p models.Provider) {
-			defer wg.Done()
-			
-			providerResults := bs.runProviderBenchmark(ctx, p, request, progressCallback)
-			
-			mu.Lock()
-			results[p.Name] = providerResults
-			mu.Unlock()
-		}(provider)
+		for _, model := range provider.Models {
+			wg.Add(1)
+			go func(p models.Provider, m string) {
+				defer wg.Done()
+				
+				// Create a unique key for provider/model combination
+				providerModelKey := fmt.Sprintf("%s/%s", p.Name, m)
+				
+				providerResults := bs.runProviderModelBenchmark(ctx, p, m, request, progressCallback)
+				
+				mu.Lock()
+				results[providerModelKey] = providerResults
+				mu.Unlock()
+			}(provider, model)
+		}
 	}
 
 	wg.Wait()
 	return results, nil
 }
 
-// runProviderBenchmark runs benchmark for a single provider
-func (bs *BenchmarkService) runProviderBenchmark(ctx context.Context, provider models.Provider, request models.BenchmarkRequest, progressCallback func(string, int, int)) []models.BenchmarkResult {
+// runProviderModelBenchmark runs benchmark for a single provider/model combination
+func (bs *BenchmarkService) runProviderModelBenchmark(ctx context.Context, provider models.Provider, model string, request models.BenchmarkRequest, progressCallback func(string, int, int)) []models.BenchmarkResult {
 	service := NewOpenAIService(provider, bs.timeout)
 	results := make([]models.BenchmarkResult, 0, bs.config.Requests)
 	
@@ -86,6 +91,9 @@ func (bs *BenchmarkService) runProviderBenchmark(ctx context.Context, provider m
 	semaphore := make(chan struct{}, bs.config.Concurrency)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
+	
+	// Create a unique identifier for progress tracking
+	providerModelKey := fmt.Sprintf("%s/%s", provider.Name, model)
 	
 	for i := 0; i < bs.config.Requests; i++ {
 		wg.Add(1)
@@ -96,9 +104,9 @@ func (bs *BenchmarkService) runProviderBenchmark(ctx context.Context, provider m
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }()
 			
-			// Update request model to use provider's model
+			// Update request model to use the specific model
 			providerRequest := request
-			providerRequest.Model = provider.Model
+			providerRequest.Model = model
 			
 			var result models.BenchmarkResult
 			if providerRequest.Stream {
@@ -110,7 +118,7 @@ func (bs *BenchmarkService) runProviderBenchmark(ctx context.Context, provider m
 			mu.Lock()
 			results = append(results, result)
 			if progressCallback != nil {
-				progressCallback(provider.Name, len(results), bs.config.Requests)
+				progressCallback(providerModelKey, len(results), bs.config.Requests)
 			}
 			mu.Unlock()
 		}(i)

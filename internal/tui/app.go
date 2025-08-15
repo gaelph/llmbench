@@ -290,7 +290,15 @@ func (m Model) renderMenu() string {
 	providers := m.benchmarkService.GetProviders()
 	b.WriteString(fmt.Sprintf("Configured providers: %d\n", len(providers)))
 	for _, provider := range providers {
-		b.WriteString(fmt.Sprintf("  • %s (%s)\n", provider.Name, provider.Model))
+		modelsStr := "no models"
+		if len(provider.Models) > 0 {
+			if len(provider.Models) == 1 {
+				modelsStr = provider.Models[0]
+			} else {
+				modelsStr = fmt.Sprintf("%d models", len(provider.Models))
+			}
+		}
+		b.WriteString(fmt.Sprintf("  • %s (%s)\n", provider.Name, modelsStr))
 	}
 	b.WriteString("\n")
 

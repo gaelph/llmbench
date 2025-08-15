@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -97,7 +98,15 @@ func showConfig(cmd *cobra.Command, args []string) error {
 	for i, provider := range config.Benchmark.Providers {
 		fmt.Printf("  %d. %s\n", i+1, provider.Name)
 		fmt.Printf("     Base URL: %s\n", provider.BaseURL)
-		fmt.Printf("     Model: %s\n", provider.Model)
+		if len(provider.Models) > 0 {
+			if len(provider.Models) == 1 {
+				fmt.Printf("     Model: %s\n", provider.Models[0])
+			} else {
+				fmt.Printf("     Models: %s\n", strings.Join(provider.Models, ", "))
+			}
+		} else {
+			fmt.Printf("     Models: none configured\n")
+		}
 		fmt.Printf("     API Key: %s\n", maskAPIKey(provider.APIKey))
 	}
 

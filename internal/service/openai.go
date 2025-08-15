@@ -68,7 +68,7 @@ func (s *OpenAIService) SendChatCompletion(ctx context.Context, request models.B
 	// Prepare the chat completion request
 	chatRequest := openai.ChatCompletionNewParams{
 		Messages: messages,
-		Model:    s.provider.Model,
+		Model:    request.Model,
 	}
 
 	if request.MaxTokens > 0 {
@@ -106,6 +106,11 @@ func (s *OpenAIService) TestConnection(ctx context.Context) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
+	// Use the first model for connection testing
+	if len(s.provider.Models) == 0 {
+		return fmt.Errorf("no models configured for provider %s", s.provider.Name)
+	}
+
 	// Send a simple test message
 	testRequest := models.BenchmarkRequest{
 		Messages: []models.ChatMessage{
@@ -114,7 +119,7 @@ func (s *OpenAIService) TestConnection(ctx context.Context) error {
 				Content: "Hello, this is a connection test. Please respond with 'OK'.",
 			},
 		},
-		Model:     s.provider.Model,
+		Model:     s.provider.Models[0],
 		MaxTokens: 20,
 	}
 
@@ -157,7 +162,7 @@ func (s *OpenAIService) SendChatCompletionStream(ctx context.Context, request mo
 	// Prepare the streaming chat completion request
 	chatRequest := openai.ChatCompletionNewParams{
 		Messages: messages,
-		Model:    s.provider.Model,
+		Model:    request.Model,
 	}
 
 	if request.MaxTokens > 0 {

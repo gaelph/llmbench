@@ -4,10 +4,10 @@ import "time"
 
 // Provider represents an LLM service provider configuration
 type Provider struct {
-	Name    string `mapstructure:"name" yaml:"name"`
-	BaseURL string `mapstructure:"base_url" yaml:"base_url"`
-	APIKey  string `mapstructure:"api_key" yaml:"api_key"`
-	Model   string `mapstructure:"model" yaml:"model"`
+	Name    string   `mapstructure:"name" yaml:"name"`
+	BaseURL string   `mapstructure:"base_url" yaml:"base_url"`
+	APIKey  string   `mapstructure:"api_key" yaml:"api_key"`
+	Models  []string `mapstructure:"models" yaml:"models"`
 }
 
 // BenchmarkConfig represents the benchmark configuration
@@ -35,6 +35,7 @@ type ChatMessage struct {
 // BenchmarkResult represents the result of a benchmark test
 type BenchmarkResult struct {
 	Provider     string        `json:"provider"`
+	ModelName    string        `json:"model_name"`
 	Success      bool          `json:"success"`
 	ResponseTime time.Duration `json:"response_time"`
 	TokensUsed   int           `json:"tokens_used,omitempty"`
@@ -52,6 +53,7 @@ type BenchmarkResult struct {
 // BenchmarkSummary represents the summary of all benchmark results
 type BenchmarkSummary struct {
 	Provider        string        `json:"provider"`
+	ModelName       string        `json:"model_name"`
 	TotalRequests   int           `json:"total_requests"`
 	SuccessfulReqs  int           `json:"successful_requests"`
 	FailedRequests  int           `json:"failed_requests"`
