@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"llmbench/internal/models"
+	"llmbench/internal/utils"
 
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
@@ -13,9 +14,10 @@ import (
 
 // OpenAIService wraps the OpenAI client for benchmark operations
 type OpenAIService struct {
-	client   openai.Client
-	provider models.Provider
-	timeout  time.Duration
+	client       openai.Client
+	provider     models.Provider
+	timeout      time.Duration
+	tokenCounter *utils.TokenCounter
 }
 
 // NewOpenAIService creates a new OpenAI service instance
@@ -31,10 +33,18 @@ func NewOpenAIService(provider models.Provider, timeout time.Duration) *OpenAISe
 
 	client := openai.NewClient(opts...)
 
+	// Initialize token counter
+	tokenCounter, err := utils.NewTokenCounter()
+	if err != nil {
+		// Log error but don't fail - we can still function without token counting
+		fmt.Printf("Warning: Failed to initialize token counter: %v\n", err)
+	}
+
 	return &OpenAIService{
-		client:   client,
-		provider: provider,
-		timeout:  timeout,
+		client:       client,
+		provider:     provider,
+		timeout:      timeout,
+		tokenCounter: tokenCounter,
 	}
 }
 
@@ -93,8 +103,20 @@ func (s *OpenAIService) SendChatCompletion(ctx context.Context, request models.B
 		result.Response = response.Choices[0].Message.Content
 	}
 
-	// Extract token usage if available
-	if response.Usage.TotalTokens > 0 {
+	// Calculate token usage using our token counter
+	if s.tokenCounter != nil {
+		// Count input tokens
+		inputTokens := s.tokenCounter.CountChatCompletionTokens(request.Messages, request.Model)
+		
+		// Count output tokens
+		outputTokens := 0
+		if result.Response != "" {
+			outputTokens = s.tokenCounter.CountTokens(result.Response)
+		}
+		
+		result.TokensUsed = inputTokens + outputTokens
+	} else if response.Usage.TotalTokens > 0 {
+		// Fallback to OpenAI's token count if our counter is not available
 		result.TokensUsed = int(response.Usage.TotalTokens)
 	}
 
@@ -174,9 +196,9 @@ func (s *OpenAIService) SendChatCompletionStream(ctx context.Context, request mo
 	defer stream.Close()
 
 	var responseContent string
-	var tokenCount int
+	var chunkCount int
 	var firstTokenTime time.Time
-	var lastTokenTime time.Time
+	var streamEndTime time.Time
 	firstToken := true
 
 	// Process the stream
@@ -191,10 +213,12 @@ func (s *OpenAIService) SendChatCompletionStream(ctx context.Context, request mo
 			}
 			
 			responseContent += chunk.Choices[0].Delta.Content
-			tokenCount++
-			lastTokenTime = time.Now()
+			chunkCount++
 		}
 	}
+	
+	// Mark the end of streaming
+	streamEndTime = time.Now()
 
 	// Check for streaming errors
 	if err := stream.Err(); err != nil {
@@ -208,15 +232,37 @@ func (s *OpenAIService) SendChatCompletionStream(ctx context.Context, request mo
 	result.Success = true
 	result.ResponseTime = time.Since(start)
 	result.Response = responseContent
-	result.StreamingTokens = tokenCount
 	
-	if !firstTokenTime.IsZero() && !lastTokenTime.IsZero() {
-		streamingDuration := lastTokenTime.Sub(firstTokenTime)
+	// Calculate proper token counts using our token counter
+	var totalTokens int
+	var outputTokens int
+	
+	if s.tokenCounter != nil {
+		// Count input tokens
+		inputTokens := s.tokenCounter.CountChatCompletionTokens(request.Messages, request.Model)
+		
+		// Count output tokens from the complete response
+		if responseContent != "" {
+			outputTokens = s.tokenCounter.CountTokens(responseContent)
+		}
+		
+		totalTokens = inputTokens + outputTokens
+		result.TokensUsed = totalTokens
+	}
+	
+	// Set streaming-specific metrics
+	result.StreamingTokens = outputTokens // Use actual token count, not chunk count
+	
+	// Calculate streaming duration and throughput properly
+	if !firstTokenTime.IsZero() && !streamEndTime.IsZero() {
+		// Calculate the total streaming duration from first token to end of stream
+		streamingDuration := streamEndTime.Sub(firstTokenTime)
 		result.StreamingDuration = streamingDuration
 		
-		// Calculate token throughput (tokens per second)
-		if streamingDuration.Seconds() > 0 {
-			result.TokenThroughput = float64(tokenCount) / streamingDuration.Seconds()
+		// Calculate token throughput (tokens per second) using actual output tokens
+		// Only calculate if we have a reasonable duration (at least 1ms) and output tokens
+		if streamingDuration.Milliseconds() > 0 && outputTokens > 0 {
+			result.TokenThroughput = float64(outputTokens) / streamingDuration.Seconds()
 		}
 	}
 
