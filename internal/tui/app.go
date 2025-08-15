@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"llmbench/internal/charts"
 	"llmbench/internal/models"
 	"llmbench/internal/service"
 
@@ -76,6 +77,11 @@ type Model struct {
 	// Results
 	summaries map[string]models.BenchmarkSummary
 
+	// Chart functionality
+	chartGenerator *charts.ChartGenerator
+	currentChartTab int
+	chartTabs      []ChartTab
+
 	// Save functionality
 	saveFilename string
 	saveError    error
@@ -91,6 +97,13 @@ type Model struct {
 type BenchmarkProgress struct {
 	Completed int
 	Total     int
+}
+
+// ChartTab represents a chart tab with its metadata
+type ChartTab struct {
+	Name        string
+	Description string
+	ChartType   string
 }
 
 type saveCompleteMsg struct {
@@ -149,6 +162,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.benchmarkDone = true
 		m.summaries = m.benchmarkService.GenerateSummary(msg.results)
 		m.state = StateResults
+		// Initialize chart functionality
+		m.initializeCharts()
 		return m, nil
 
 	case benchmarkErrorMsg:
@@ -242,17 +257,27 @@ func (m Model) handleBenchmarkKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // handleResultsKeys handles results screen
 func (m Model) handleResultsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "ctrl+c", "q":
+	switch {
+	case msg.String() == "ctrl+c" || msg.String() == "q":
 		return m, tea.Quit
-	case "esc", "b":
+	case msg.String() == "esc" || msg.String() == "b":
 		m.state = StateMenu
-	case "s":
+	case msg.String() == "s":
 		// Start save process
 		m.state = StateSavePrompt
 		m.saveFilename = ""
 		m.saveError = nil
 		m.saveSuccess = false
+	case msg.Type == tea.KeyLeft || msg.String() == "h":
+		// Navigate to previous chart tab
+		if len(m.chartTabs) > 0 {
+			m.currentChartTab = (m.currentChartTab - 1 + len(m.chartTabs)) % len(m.chartTabs)
+		}
+	case msg.Type == tea.KeyRight || msg.String() == "l":
+		// Navigate to next chart tab
+		if len(m.chartTabs) > 0 {
+			m.currentChartTab = (m.currentChartTab + 1) % len(m.chartTabs)
+		}
 	}
 	return m, nil
 }
@@ -386,6 +411,95 @@ func (m Model) renderMenu() string {
 	b.WriteString(infoStyle.Render("Use ↑/↓ to navigate, Enter to select, q to quit"))
 
 	return boxStyle.Render(b.String())
+}
+
+// initializeCharts sets up the chart generator and available chart tabs
+func (m *Model) initializeCharts() {
+	// Set up chart generator with appropriate dimensions
+	chartWidth := m.width - 10  // Leave some margin
+	chartHeight := m.height - 25 // Leave more space for title, tabs, instructions, and legends
+	
+	if chartWidth < 40 {
+		chartWidth = 40
+	}
+	if chartHeight < 8 {
+		chartHeight = 8
+	}
+	// Cap the maximum height to prevent overflow
+	if chartHeight > 20 {
+		chartHeight = 20
+	}
+	
+	m.chartGenerator = charts.NewChartGenerator(chartWidth, chartHeight)
+	
+	// Always initialize all three chart tabs for better user experience
+	// The chart generation will handle cases where data isn't available
+	m.chartTabs = []ChartTab{
+		{
+			Name:        "Response Time",
+			Description: "Average response times for each model",
+			ChartType:   "response_time",
+		},
+		{
+			Name:        "Time to First Token",
+			Description: "Time to first token for streaming models",
+			ChartType:   "ttft",
+		},
+		{
+			Name:        "Token Throughput",
+			Description: "Token throughput for streaming models",
+			ChartType:   "throughput",
+		},
+	}
+	
+	// Start with the first tab
+	m.currentChartTab = 0
+}
+
+// getCurrentChart returns the chart content for the currently selected tab
+func (m Model) getCurrentChart() string {
+	if len(m.chartTabs) == 0 || m.chartGenerator == nil {
+		return "No charts available"
+	}
+	
+	currentTab := m.chartTabs[m.currentChartTab]
+	
+	switch currentTab.ChartType {
+	case "response_time":
+		return m.chartGenerator.GenerateResponseTimeChart(m.summaries)
+	case "ttft":
+		return m.chartGenerator.GenerateTTFTChart(m.summaries)
+	case "throughput":
+		return m.chartGenerator.GenerateThroughputChart(m.summaries)
+	default:
+		return "Unknown chart type"
+	}
+}
+
+// renderChartTabs renders the tab navigation header
+func (m Model) renderChartTabs() string {
+	if len(m.chartTabs) == 0 {
+		return ""
+	}
+	
+	var tabs strings.Builder
+	
+	for i, tab := range m.chartTabs {
+		if i == m.currentChartTab {
+			// Active tab
+			tabs.WriteString(selectedStyle.Render(fmt.Sprintf(" %s ", tab.Name)))
+		} else {
+			// Inactive tab
+			tabs.WriteString(normalStyle.Render(fmt.Sprintf(" %s ", tab.Name)))
+		}
+		
+		// Add separator between tabs
+		if i < len(m.chartTabs)-1 {
+			tabs.WriteString(normalStyle.Render(" | "))
+		}
+	}
+	
+	return tabs.String()
 }
 
 // saveResults saves the benchmark results to a YAML file
@@ -614,28 +728,59 @@ func (m Model) renderBenchmark() string {
 	return boxStyle.Render(b.String())
 }
 
-// renderResults renders the results screen
+// renderResults renders the results screen with chart-based visualization
 func (m Model) renderResults() string {
 	var b strings.Builder
 
 	b.WriteString(titleStyle.Render("Benchmark Results"))
 	b.WriteString("\n\n")
 
-	for provider, summary := range m.summaries {
-		b.WriteString(fmt.Sprintf("📊 %s\n", strings.ToUpper(provider)))
-		b.WriteString(strings.Repeat("-", 30) + "\n")
-		b.WriteString(fmt.Sprintf("Total Requests:     %d\n", summary.TotalRequests))
-		b.WriteString(fmt.Sprintf("Successful:         %d\n", summary.SuccessfulReqs))
-		b.WriteString(fmt.Sprintf("Failed:             %d\n", summary.FailedRequests))
-		b.WriteString(fmt.Sprintf("Error Rate:         %.2f%%\n", summary.ErrorRate))
-		b.WriteString(fmt.Sprintf("Avg Response Time:  %v\n", summary.AvgResponseTime))
-		b.WriteString(fmt.Sprintf("Min Response Time:  %v\n", summary.MinResponseTime))
-		b.WriteString(fmt.Sprintf("Max Response Time:  %v\n", summary.MaxResponseTime))
-		b.WriteString(fmt.Sprintf("Total Tokens:       %d\n", summary.TotalTokens))
+	// Render chart tabs if available
+	if len(m.chartTabs) > 0 {
+		b.WriteString(m.renderChartTabs())
 		b.WriteString("\n")
-	}
+		
+		// Add user-friendly navigation message when multiple tabs are available
+		if len(m.chartTabs) > 1 {
+			b.WriteString(infoStyle.Render(fmt.Sprintf("💡 Navigate between %d chart types using ←/→ or h/l keys", len(m.chartTabs))))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+		
+		// Show current tab description
+		currentTab := m.chartTabs[m.currentChartTab]
+		b.WriteString(infoStyle.Render(fmt.Sprintf("📈 %s (Tab %d of %d)", currentTab.Description, m.currentChartTab+1, len(m.chartTabs))))
+		b.WriteString("\n\n")
+		
+		// Render the current chart
+		chartContent := m.getCurrentChart()
+		b.WriteString(chartContent)
+		b.WriteString("\n\n")
+		
+		// Navigation instructions
+		if len(m.chartTabs) > 1 {
+			b.WriteString(infoStyle.Render("Use ←/→ or h/l to switch charts, 's' to save, 'b' or Esc to go back, q to quit"))
+		} else {
+			b.WriteString(infoStyle.Render("Press 's' to save results, 'b' or Esc to go back, q to quit"))
+		}
+	} else {
+		// Fallback to text-based results if no charts available
+		for provider, summary := range m.summaries {
+			b.WriteString(fmt.Sprintf("📊 %s\n", strings.ToUpper(provider)))
+			b.WriteString(strings.Repeat("-", 30) + "\n")
+			b.WriteString(fmt.Sprintf("Total Requests:     %d\n", summary.TotalRequests))
+			b.WriteString(fmt.Sprintf("Successful:         %d\n", summary.SuccessfulReqs))
+			b.WriteString(fmt.Sprintf("Failed:             %d\n", summary.FailedRequests))
+			b.WriteString(fmt.Sprintf("Error Rate:         %.2f%%\n", summary.ErrorRate))
+			b.WriteString(fmt.Sprintf("Avg Response Time:  %v\n", summary.AvgResponseTime))
+			b.WriteString(fmt.Sprintf("Min Response Time:  %v\n", summary.MinResponseTime))
+			b.WriteString(fmt.Sprintf("Max Response Time:  %v\n", summary.MaxResponseTime))
+			b.WriteString(fmt.Sprintf("Total Tokens:       %d\n", summary.TotalTokens))
+			b.WriteString("\n")
+		}
 
-	b.WriteString(infoStyle.Render("Press 's' to save results, 'b' or Esc to go back, q to quit"))
+		b.WriteString(infoStyle.Render("Press 's' to save results, 'b' or Esc to go back, q to quit"))
+	}
 
 	return boxStyle.Render(b.String())
 }
